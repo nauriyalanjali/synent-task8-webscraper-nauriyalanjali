@@ -1,5 +1,5 @@
 """
-Web Scraper - Main Application
+Web Scraper - Main Application (FIXED)
 Purpose: Scrape product data from websites and save to CSV/JSON
 
 Author: Nauriya Lanjali
@@ -126,6 +126,9 @@ class WebScraper:
         3. Handle missing data gracefully
         4. Clean and format data
         
+        IMPORTANT: Always inspect the website first!
+        Right-click → Inspect to find the correct CSS classes
+        
         Args:
             soup: BeautifulSoup object
         
@@ -134,29 +137,53 @@ class WebScraper:
         """
         books = []
         
-        # Find all product containers - they have class 'product_pod'
-        products = soup.find_all('div', class_='product_pod')
+        # Find all product containers
+        # CORRECTED: Looking for article tags with class 'product_pod'
+        products = soup.find_all('article', class_='product_pod')
         logger.info(f"Found {len(products)} products")
+        
+        # If still no products, try alternative selector
+        if not products:
+            logger.warning("No products found with 'article' tag, trying 'div'...")
+            products = soup.find_all('div', class_='product_pod')
+            logger.info(f"Found {len(products)} products with alternative selector")
         
         for idx, product in enumerate(products, 1):
             try:
                 # Extract title from h3 > a tag's title attribute
-                title_element = product.find('h3').find('a')
-                title = title_element['title'] if title_element else 'N/A'
+                title_element = product.find('h3')
+                if title_element:
+                    title_link = title_element.find('a')
+                    title = title_link.get('title', 'N/A') if title_link else 'N/A'
+                else:
+                    title = 'N/A'
                 
-                # Extract price - remove special characters
+                # Extract price - look for span with class 'price_color'
                 price_element = product.find('p', class_='price_color')
                 price_raw = price_element.text if price_element else 'N/A'
-                # Clean price: remove currency symbol
-                price = price_raw.replace('£', '').strip()
+                # Clean price: remove currency symbol and extra whitespace
+                price = price_raw.replace('£', '').replace('Â', '').strip()
                 
-                # Extract rating - stored as class name (e.g., 'Four', 'Five')
+                # Extract rating - stored in p tag with class 'star-rating'
+                # The rating is in the class attribute (e.g., 'star-rating Three')
                 rating_element = product.find('p', class_='star-rating')
-                rating = rating_element['class'][1] if rating_element else 'N/A'
+                if rating_element and 'class' in rating_element.attrs:
+                    # Get second class (first is 'star-rating', second is the rating)
+                    classes = rating_element.get('class', [])
+                    rating = classes[1] if len(classes) > 1 else 'N/A'
+                else:
+                    rating = 'N/A'
                 
-                # Extract availability
+                # Extract availability from p tag with class 'instock availability'
                 availability_element = product.find('p', class_='instock availability')
                 availability = availability_element.text.strip() if availability_element else 'N/A'
+                
+                # Extract book URL from the link
+                book_url = 'N/A'
+                if title_element:
+                    link = title_element.find('a')
+                    if link and 'href' in link.attrs:
+                        book_url = 'http://books.toscrape.com/' + link['href']
                 
                 # Create book dictionary
                 book_data = {
@@ -164,7 +191,7 @@ class WebScraper:
                     'price': price,
                     'rating': rating,
                     'availability': availability,
-                    'url': title_element['href'] if title_element else 'N/A'
+                    'url': book_url
                 }
                 
                 books.append(book_data)
@@ -307,6 +334,43 @@ class WebScraper:
             print()
 
 
+def inspect_page(url: str):
+    """
+    Helper function to inspect page structure for debugging.
+    
+    This helps you understand the website structure when selectors don't work.
+    """
+    print(f"\n🔍 INSPECTING PAGE: {url}\n")
+    
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+    }
+    
+    try:
+        response = requests.get(url, headers=headers, timeout=5)
+        soup = BeautifulSoup(response.content, 'html.parser')
+        
+        # Check for different possible containers
+        print("Checking for product containers...")
+        
+        articles = soup.find_all('article')
+        print(f"  - <article> tags found: {len(articles)}")
+        
+        divs = soup.find_all('div', class_='product_pod')
+        print(f"  - <div class='product_pod'> found: {len(divs)}")
+        
+        products = soup.find_all(class_='product_pod')
+        print(f"  - Any element with class 'product_pod': {len(products)}")
+        
+        # Show first product structure
+        if products:
+            print(f"\n📝 First product HTML (first 500 chars):")
+            print(str(products[0])[:500])
+        
+    except Exception as e:
+        print(f"Error: {e}")
+
+
 def main():
     """
     Main function to run the scraper.
@@ -320,6 +384,10 @@ def main():
     
     # Initialize scraper
     scraper = WebScraper('http://books.toscrape.com')
+    
+    # Optional: Inspect page structure for debugging
+    # Uncomment the line below to see page structure
+    # inspect_page('http://books.toscrape.com/')
     
     # Scrape books (1 page for demo, change to more pages if needed)
     print("🔄 Starting scrape...\n")
@@ -339,6 +407,12 @@ def main():
         print(f"   Files saved in: {os.path.abspath(scraper.output_dir)}/")
     else:
         print("\n❌ Failed to scrape any data")
+        print("\n💡 TROUBLESHOOTING:")
+        print("   1. Check if website is working (open in browser)")
+        print("   2. The website structure might have changed")
+        print("   3. Uncomment inspect_page() in main() to debug")
+        print("   4. Right-click on website → Inspect to find correct selectors")
+        print("\n   Try running: inspect_page('http://books.toscrape.com/')")
 
 
 if __name__ == '__main__':
